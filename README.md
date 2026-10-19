@@ -14,7 +14,7 @@ Mở ứng dụng tại [http://localhost:3000](http://localhost:3000), API docs
 
 Thiết lập `POSTGRES_PASSWORD` và `JWT_SECRET` trong môi trường trước khi chạy nếu dùng ngoài máy phát triển. Giá trị mặc định trong Compose chỉ dành cho local.
 
-Trong cấu hình local, API chạy seed tài khoản demo tự động sau migration. Seed có tính idempotent: nếu email đã tồn tại thì giữ nguyên tài khoản đó.
+Khi chạy bằng Compose, API bật seed tài khoản demo sau migration. Khi chạy API trực tiếp trên máy, seed mặc định tắt; có thể bật thủ công theo hướng dẫn bên dưới. Seed có tính idempotent: nếu email đã tồn tại thì giữ nguyên tài khoản đó.
 
 ### Trang người dùng và quản trị
 
@@ -25,19 +25,84 @@ Trong cấu hình local, API chạy seed tài khoản demo tự động sau migr
 
 Để bootstrap admin, cấu hình `ADMIN_BOOTSTRAP_TOKEN` bằng một chuỗi ngẫu nhiên mạnh trong file `.env` ở thư mục gốc khi dùng Docker Compose (hoặc trong `server/.env` khi chạy API trực tiếp). Đăng nhập tài khoản cần nâng quyền, mở `/profile`, rồi nhập token. Bootstrap chỉ thành công một lần, khi chưa có admin; sau đó có thể bỏ token khỏi môi trường. Cột role được thêm qua migration `0002_admin_role`, tự chạy khi khởi động bằng Compose.
 
-## Chạy từng phần trong môi trường phát triển
+## Chạy local trên Windows
 
-1. Khởi động PostgreSQL 16 và tạo database `vaultshare`.
-2. Tạo `server/.env` từ `server/.env.example`; chỉnh `DATABASE_URL` và `JWT_SECRET`.
-3. Trong `server/`, cài dependency từ `requirements.txt`, sau đó chạy `alembic upgrade head` và `uvicorn app.main:app --reload`.
-4. Ở thư mục gốc, chạy `npm install`, sau đó `npm run dev`.
+> Cách này chạy PostgreSQL, API và client trực tiếp trên máy; không chạy service API/client trong Docker. Cần Node.js/npm, Python 3.12 và PostgreSQL 16 đang chạy. PostgreSQL phải nghe trên `localhost:5432`, đúng với `DATABASE_URL` mẫu.
 
-Client dùng `NEXT_PUBLIC_API_URL` (mặc định `http://localhost:8000/api/v1`).
+### 1. Kiểm tra database
 
-## Cơ sở dữ liệu
+Đảm bảo PostgreSQL có database `vaultshare` và user/password khớp với `DATABASE_URL` trong `server/.env`. Nếu cần tạo mới, mở PowerShell rồi chạy `psql -U postgres`; tại prompt `psql`, tạo user và database (đổi password ví dụ thành giá trị local của bạn):
 
-- [Sơ đồ ERD và giải thích bảng](docs/erd.md)
+```sql
+CREATE USER vaultshare WITH PASSWORD 'choose-a-local-password';
+CREATE DATABASE vaultshare OWNER vaultshare;
+```
+
+Nếu password chứa ký tự đặc biệt như `@`, `:` hoặc `/`, hãy URL-encode phần password trong `DATABASE_URL`. Thoát `psql` bằng `\q`.
+
+> Compose hiện không publish port PostgreSQL ra host. Nếu dùng PostgreSQL trong Docker thay cho PostgreSQL cài trên Windows, cần chủ động publish port `5432` tới loopback hoặc dùng cấu hình kết nối phù hợp; chỉ chạy `docker compose up -d db` sẽ không làm database truy cập được qua `localhost:5432`.
+
+### 2. Cấu hình và chạy API
+
+Mở terminal thứ nhất tại thư mục gốc dự án. Nếu chưa có file môi trường, tạo từ mẫu; không ghi đè `server/.env` đang tồn tại:
+
+```powershell
+Set-Location C:\Users\1\Desktop\DA\ATBM
+if (!(Test-Path .\server\.env)) { Copy-Item .\server\.env.example .\server\.env }
+```
+
+Mở `server/.env` và xác nhận `DATABASE_URL`, `JWT_SECRET`, `ADMIN_BOOTSTRAP_TOKEN`, `CORS_ORIGINS` và `STORAGE_PATH`. File này được Git ignore; không commit hoặc gửi các secret lên repository.
+
+Tạo virtual environment, cài dependencies, chạy migration rồi khởi động API:
+
+```powershell
+Set-Location .\server
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Nếu PowerShell chặn activate script, cho phép script ở terminal hiện tại bằng `Set-ExecutionPolicy -Scope Process Bypass`, sau đó activate lại. Nếu lệnh `py -3.12` không tồn tại, cài Python 3.12 và bật Python Launcher/PATH.
+
+Muốn tạo tài khoản demo local, dừng API bằng `Ctrl+C`, vẫn ở thư mục `server` và chạy:
+
+```powershell
+$env:SEED_DEMO_USERS = "true"
+python -m app.seed
+Remove-Item Env:SEED_DEMO_USERS
+```
+
+Sau đó khởi động lại API. Nếu không seed demo, có thể đăng ký tài khoản mới tại `/login`.
+
+### 3. Chạy client
+
+Mở terminal thứ hai tại thư mục gốc dự án:
+
+```powershell
+Set-Location C:\Users\1\Desktop\DA\ATBM
+npm install
+npm run dev
+```
+
+Client dùng `NEXT_PUBLIC_API_URL`, mặc định `http://localhost:8000/api/v1`. Mở ứng dụng tại [http://localhost:3000](http://localhost:3000); API docs tại [http://localhost:8000/docs](http://localhost:8000/docs). `CORS_ORIGINS` trong `server/.env` cần cho phép `http://localhost:3000`.
+
+### Vị trí file khi chạy local
+
+Với `STORAGE_PATH=./storage`, backend ghi ciphertext vào thư mục `storage` tương đối với working directory của tiến trình API. Các lệnh phía trên chạy API từ `server/`, nên file được lưu tại `server/storage/`; thư mục này được tạo tự động và đã nằm trong `.gitignore`. Database chỉ giữ metadata và storage key, còn nội dung file trong thư mục này là bản mã.
+
+Đây là ổ đĩa local, chưa phải cloud storage. Khi chạy toàn bộ bằng Docker Compose, Compose đặt `STORAGE_PATH=/data` và mount named volume `encrypted_files` vào `/data`; dữ liệu khi đó nằm trong Docker volume thay vì `server/storage`. Muốn dùng dịch vụ cloud/object storage cần tích hợp riêng, hiện project chưa cấu hình S3/Azure Blob/GCS.
+
+## Tài liệu dự án
+
+- [Giới thiệu và giải thích các tính năng hiện có](docs/gioi-thieu-va-tinh-nang.md)
 - [Sơ đồ và giải thích các luồng hoạt động chính](docs/luong-hoat-dong.md)
+- [Sơ đồ ERD và giải thích bảng](docs/erd.md)
+
+### Cơ sở dữ liệu
+
 - [Migration khởi tạo](server/migrations/versions/0001_initial_schema.py)
 - [Migration role quản trị](server/migrations/versions/0002_admin_role.py)
 - Thay đổi schema về sau: tạo revision mới bằng `alembic revision --autogenerate -m "describe change"`, kiểm tra migration được sinh, rồi áp dụng bằng `alembic upgrade head`.
