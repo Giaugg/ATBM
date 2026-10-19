@@ -37,6 +37,7 @@ Client dùng `NEXT_PUBLIC_API_URL` (mặc định `http://localhost:8000/api/v1`
 ## Cơ sở dữ liệu
 
 - [Sơ đồ ERD và giải thích bảng](docs/erd.md)
+- [Sơ đồ và giải thích các luồng hoạt động chính](docs/luong-hoat-dong.md)
 - [Migration khởi tạo](server/migrations/versions/0001_initial_schema.py)
 - [Migration role quản trị](server/migrations/versions/0002_admin_role.py)
 - Thay đổi schema về sau: tạo revision mới bằng `alembic revision --autogenerate -m "describe change"`, kiểm tra migration được sinh, rồi áp dụng bằng `alembic upgrade head`.
