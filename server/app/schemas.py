@@ -1,0 +1,43 @@
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=1, max_length=120)
+    public_key: str = Field(min_length=20)
+    encrypted_private_key: str = Field(min_length=20)
+    private_key_iv: str = Field(min_length=8, max_length=64)
+    kdf_salt: str = Field(min_length=8, max_length=64)
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+class UserOut(BaseModel):
+    id: int; email: str; display_name: str; public_key: str
+    encrypted_private_key: str; private_key_iv: str; kdf_salt: str; created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class TokenOut(BaseModel):
+    access_token: str; token_type: str = "bearer"; user: UserOut
+
+class ShareIn(BaseModel):
+    email: EmailStr
+    wrapped_key: str = Field(min_length=20)
+
+class GrantOut(BaseModel):
+    email: str; display_name: str; created_at: datetime
+
+class DocumentOut(BaseModel):
+    id: int; original_name: str; content_type: str; original_size: int; ciphertext_size: int
+    cipher_nonce: str; checksum_sha256: str; owner_email: str; created_at: datetime
+    wrapped_key: str; grants: list[GrantOut]
+
+class StatsOut(BaseModel):
+    document_count: int; storage_bytes: int; shared_count: int; recipient_count: int
+
+class AuditOut(BaseModel):
+    id: int; action: str; details: str | None; created_at: datetime; document_name: str | None
+
+class MessageOut(BaseModel): message: str

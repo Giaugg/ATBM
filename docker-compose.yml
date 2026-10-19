@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vaultshare
+      POSTGRES_USER: vaultshare
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vaultshare_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vaultshare -d vaultshare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: ./server
+    environment:
+      DATABASE_URL: postgresql+psycopg://vaultshare:${POSTGRES_PASSWORD:-vaultshare_dev}@db:5432/vaultshare
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-before-deployment}
+      STORAGE_PATH: /data
+      CORS_ORIGINS: http://localhost:3000
+      MAX_UPLOAD_BYTES: 104857600
+      SEED_DEMO_USERS: "true"
+    volumes:
+      - encrypted_files:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+  client:
+    build: ./client
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+volumes:
+  postgres_data:
+  encrypted_files:

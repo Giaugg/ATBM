@@ -1,0 +1,12 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+server/.env
+server/storage/
+server/__pycache__/
+server/app/__pycache__/
+server/migrations/__pycache__/
+*.py[cod]
+*.log
