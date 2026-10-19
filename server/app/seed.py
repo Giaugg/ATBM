@@ -14,8 +14,8 @@ from .models import User
 from .security import hash_password
 
 DEMO_ACCOUNTS = (
-    ("demo.owner@vaultshare.local", "VaultOwner2026!", "Demo Owner"),
-    ("demo.guest@vaultshare.local", "VaultGuest2026!", "Demo Guest"),
+    ("demo.owner@example.com", "VaultOwner2026!", "Demo Owner"),
+    ("demo.guest@example.com", "VaultGuest2026!", "Demo Guest"),
 )
 
 def b64(value: bytes) -> str:

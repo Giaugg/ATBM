@@ -16,6 +16,15 @@ Thiết lập `POSTGRES_PASSWORD` và `JWT_SECRET` trong môi trường trước
 
 Trong cấu hình local, API chạy seed tài khoản demo tự động sau migration. Seed có tính idempotent: nếu email đã tồn tại thì giữ nguyên tài khoản đó.
 
+### Trang người dùng và quản trị
+
+- `/login`: đăng nhập hoặc tạo tài khoản.
+- `/`: kho tài liệu cá nhân.
+- `/profile`: xem và cập nhật tên hiển thị; bootstrap admin đầu tiên.
+- `/admin`: thống kê, khóa/mở hoặc xóa tài khoản thường, xóa tài liệu và xem nhật ký toàn hệ thống. Tất cả API quản trị đều yêu cầu role admin phía server; không thể tự xóa hoặc xóa quản trị viên khác.
+
+Để bootstrap admin, cấu hình `ADMIN_BOOTSTRAP_TOKEN` bằng một chuỗi ngẫu nhiên mạnh trong file `.env` ở thư mục gốc khi dùng Docker Compose (hoặc trong `server/.env` khi chạy API trực tiếp). Đăng nhập tài khoản cần nâng quyền, mở `/profile`, rồi nhập token. Bootstrap chỉ thành công một lần, khi chưa có admin; sau đó có thể bỏ token khỏi môi trường. Cột role được thêm qua migration `0002_admin_role`, tự chạy khi khởi động bằng Compose.
+
 ## Chạy từng phần trong môi trường phát triển
 
 1. Khởi động PostgreSQL 16 và tạo database `vaultshare`.
@@ -29,6 +38,7 @@ Client dùng `NEXT_PUBLIC_API_URL` (mặc định `http://localhost:8000/api/v1`
 
 - [Sơ đồ ERD và giải thích bảng](docs/erd.md)
 - [Migration khởi tạo](server/migrations/versions/0001_initial_schema.py)
+- [Migration role quản trị](server/migrations/versions/0002_admin_role.py)
 - Thay đổi schema về sau: tạo revision mới bằng `alembic revision --autogenerate -m "describe change"`, kiểm tra migration được sinh, rồi áp dụng bằng `alembic upgrade head`.
 
 Các bảng gồm `users`, `documents`, `document_grants` và `audit_logs`. Metadata nằm trong PostgreSQL; byte bản mã nằm trong volume `encrypted_files`. Sao lưu cần giữ đồng bộ cả database lẫn volume này.
@@ -58,14 +68,18 @@ Thoát bằng `\q`. Nếu muốn mở shell PostgreSQL bên ngoài container, c�
 
 | Vai trò | Email | Mật khẩu |
 | --- | --- | --- |
-| Chủ sở hữu | `demo.owner@vaultshare.local` | `VaultOwner2026!` |
-| Người nhận | `demo.guest@vaultshare.local` | `VaultGuest2026!` |
+| Chủ sở hữu | `demo.owner@example.com` | `VaultOwner2026!` |
+| Người nhận | `demo.guest@example.com` | `VaultGuest2026!` |
 
-Hai nút tài khoản mẫu trên trang đăng nhập sẽ điền sẵn email và mật khẩu. Các tài khoản được seed vào bảng `users`, mỗi tài khoản có cặp RSA riêng và khóa riêng được mã hóa bằng mật khẩu tương ứng. Đây là thông tin demo cố định; chỉ dùng trên môi trường phát triển cục bộ. Nếu thay mật khẩu hoặc xóa tài khoản mẫu, seed không ghi đè tài khoản hiện có.
+Các tài khoản demo được seed vào bảng `users`, mỗi tài khoản có cặp RSA riêng và khóa riêng được mã hóa bằng mật khẩu tương ứng. Dùng email/mật khẩu trong bảng để đăng nhập. Đây là thông tin demo cố định; chỉ dùng trên môi trường phát triển cục bộ. Nếu thay mật khẩu hoặc xóa tài khoản mẫu, seed không ghi đè tài khoản hiện có.
 
 ## API chính
 
 - `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`
+- `PATCH /api/v1/auth/me`
+- `POST /api/v1/admin/bootstrap` (khởi tạo admin một lần)
+- `GET /api/v1/admin/overview`, `GET /api/v1/admin/users`, `PATCH /api/v1/admin/users/{id}/active`, `DELETE /api/v1/admin/users/{id}`
+- `GET /api/v1/admin/documents`, `DELETE /api/v1/admin/documents/{id}`, `GET /api/v1/admin/activity`
 - `GET/POST /api/v1/documents`, `GET /api/v1/documents/{id}/content`, `DELETE /api/v1/documents/{id}`
 - `POST /api/v1/documents/{id}/verify`, `POST /api/v1/documents/{id}/shares`
 - `GET /api/v1/users/public-key`, `GET /api/v1/stats`, `GET /api/v1/activity`

@@ -15,9 +15,33 @@ class LoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 class UserOut(BaseModel):
-    id: int; email: str; display_name: str; public_key: str
+    id: int; email: str; display_name: str; public_key: str; is_admin: bool
     encrypted_private_key: str; private_key_iv: str; kdf_salt: str; created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+class ProfileUpdateIn(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+
+class AdminBootstrapIn(BaseModel):
+    bootstrap_token: str = Field(min_length=1, max_length=512)
+
+class AdminUserActiveIn(BaseModel):
+    is_active: bool
+
+class AdminUserOut(BaseModel):
+    id: int; email: str; display_name: str; is_active: bool; is_admin: bool; created_at: datetime
+
+class AdminDocumentOut(BaseModel):
+    id: int; original_name: str; content_type: str; original_size: int
+    ciphertext_size: int; owner_email: str; created_at: datetime
+
+class AdminAuditOut(BaseModel):
+    id: int; action: str; details: str | None; created_at: datetime
+    actor_email: str | None; document_name: str | None
+
+class AdminOverviewOut(BaseModel):
+    total_users: int; active_users: int; total_documents: int
+    storage_bytes: int; total_events: int
 
 class TokenOut(BaseModel):
     access_token: str; token_type: str = "bearer"; user: UserOut

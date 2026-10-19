@@ -21,6 +21,7 @@ erDiagram
       varchar private_key_iv
       varchar kdf_salt
       boolean is_active
+      boolean is_admin
       timestamptz created_at
       timestamptz updated_at
     }

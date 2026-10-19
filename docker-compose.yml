@@ -17,6 +17,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://vaultshare:${POSTGRES_PASSWORD:-vaultshare_dev}@db:5432/vaultshare
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-before-deployment}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
       STORAGE_PATH: /data
       CORS_ORIGINS: http://localhost:3000
       MAX_UPLOAD_BYTES: 104857600

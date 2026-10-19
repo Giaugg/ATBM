@@ -26,3 +26,7 @@ def current_user(token: str = Depends(oauth), db: Session = Depends(get_db)) -> 
     user = db.get(User, user_id)
     if not user or not user.is_active: raise HTTPException(status_code=401, detail="Tài khoản không hoạt động")
     return user
+
+def require_admin(user: User = Depends(current_user)) -> User:
+    if not user.is_admin: raise HTTPException(status_code=403, detail="Cần quyền quản trị")
+    return user

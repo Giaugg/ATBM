@@ -1,16 +1,16 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-import hashlib, os, secrets
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+import hashlib, hmac, os, secrets
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 from .config import settings
 from .database import get_db
 from .models import AuditLog, Document, DocumentGrant, User
-from .schemas import AuditOut, DocumentOut, LoginIn, MessageOut, RegisterIn, ShareIn, StatsOut, TokenOut, UserOut
-from .security import current_user, hash_password, make_token, verify_password
+from .schemas import AdminAuditOut, AdminBootstrapIn, AdminDocumentOut, AdminOverviewOut, AdminUserActiveIn, AdminUserOut, AuditOut, DocumentOut, LoginIn, MessageOut, ProfileUpdateIn, RegisterIn, ShareIn, StatsOut, TokenOut, UserOut
+from .security import current_user, hash_password, make_token, require_admin, verify_password
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -55,6 +55,88 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)): return user
+
+@app.patch("/api/v1/auth/me", response_model=UserOut)
+def update_profile(payload: ProfileUpdateIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    display_name = payload.display_name.strip()
+    if not display_name: raise HTTPException(422, "Tên hiển thị không được để trống")
+    user.display_name = display_name
+    audit(db,user.id,"profile_updated",display_name,request=request); db.commit(); db.refresh(user)
+    return user
+
+@app.post("/api/v1/admin/bootstrap", response_model=UserOut)
+def bootstrap_admin(payload: AdminBootstrapIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    configured_token = settings.admin_bootstrap_token
+    if not configured_token: raise HTTPException(404, "Chưa cấu hình token khởi tạo quản trị")
+    if db.scalar(select(User.id).where(User.is_admin.is_(True))): raise HTTPException(409, "Quyền quản trị đã được khởi tạo")
+    if not hmac.compare_digest(payload.bootstrap_token, configured_token): raise HTTPException(403, "Token khởi tạo không hợp lệ")
+    user.is_admin = True
+    audit(db,user.id,"admin_bootstrapped",request=request); db.commit(); db.refresh(user)
+    return user
+
+@app.get("/api/v1/admin/overview", response_model=AdminOverviewOut)
+def admin_overview(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return AdminOverviewOut(
+        total_users=db.scalar(select(func.count()).select_from(User)) or 0,
+        active_users=db.scalar(select(func.count()).select_from(User).where(User.is_active.is_(True))) or 0,
+        total_documents=db.scalar(select(func.count()).select_from(Document)) or 0,
+        storage_bytes=db.scalar(select(func.coalesce(func.sum(Document.original_size),0))) or 0,
+        total_events=db.scalar(select(func.count()).select_from(AuditLog)) or 0,
+    )
+
+@app.get("/api/v1/admin/users", response_model=list[AdminUserOut])
+def admin_users(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return db.scalars(select(User).order_by(User.created_at.desc()).offset(offset).limit(limit)).all()
+
+@app.patch("/api/v1/admin/users/{user_id}/active", response_model=AdminUserOut)
+def admin_set_user_active(user_id: int, payload: AdminUserActiveIn, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    is_active = payload.is_active
+    target = db.get(User, user_id)
+    if not target: raise HTTPException(404, "Không tìm thấy tài khoản")
+    if target.id == admin.id and not is_active: raise HTTPException(422, "Không thể khóa tài khoản quản trị đang sử dụng")
+    if target.is_admin and not is_active:
+        active_admins = db.scalar(select(func.count()).select_from(User).where(User.is_admin.is_(True), User.is_active.is_(True))) or 0
+        if active_admins <= 1: raise HTTPException(409, "Không thể khóa quản trị viên đang hoạt động cuối cùng")
+    target.is_active = is_active
+    audit(db,admin.id,"admin_user_activated" if is_active else "admin_user_deactivated",target.email,request=request)
+    db.commit(); db.refresh(target)
+    return target
+
+@app.delete("/api/v1/admin/users/{user_id}", response_model=MessageOut)
+def admin_delete_user(user_id: int, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    target = db.get(User, user_id)
+    if not target: raise HTTPException(404, "Không tìm thấy tài khoản")
+    if target.id == admin.id: raise HTTPException(422, "Không thể xóa tài khoản quản trị đang sử dụng")
+    if target.is_admin: raise HTTPException(403, "Không thể xóa tài khoản quản trị khác")
+    documents = db.scalars(select(Document).where(Document.owner_id == target.id)).all()
+    paths = [Path(settings.storage_path) / doc.storage_key for doc in documents]
+    audit(db,admin.id,"admin_user_deleted",target.email,request=request)
+    db.execute(delete(DocumentGrant).where(DocumentGrant.granted_by_id == target.id))
+    db.execute(delete(DocumentGrant).where(DocumentGrant.user_id == target.id))
+    db.execute(delete(Document).where(Document.owner_id == target.id))
+    db.execute(delete(User).where(User.id == target.id))
+    db.commit()
+    for path in paths: path.unlink(missing_ok=True)
+    return {"message":"Đã xóa tài khoản và dữ liệu liên quan"}
+
+@app.get("/api/v1/admin/documents", response_model=list[AdminDocumentOut])
+def admin_documents(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = db.execute(select(Document, User.email).join(User, Document.owner_id == User.id).order_by(Document.created_at.desc()).offset(offset).limit(limit)).all()
+    return [AdminDocumentOut(id=doc.id, original_name=doc.original_name, content_type=doc.content_type, original_size=doc.original_size, ciphertext_size=doc.ciphertext_size, owner_email=email, created_at=doc.created_at) for doc,email in rows]
+
+@app.delete("/api/v1/admin/documents/{document_id}", response_model=MessageOut)
+def admin_delete_document(document_id: int, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    doc = db.get(Document, document_id)
+    if not doc: raise HTTPException(404, "Không tìm thấy tài liệu")
+    path = Path(settings.storage_path) / doc.storage_key
+    audit(db,admin.id,"admin_document_deleted",doc.original_name,doc.id,request)
+    db.delete(doc); db.commit(); path.unlink(missing_ok=True)
+    return {"message":"Đã xóa tài liệu"}
+
+@app.get("/api/v1/admin/activity", response_model=list[AdminAuditOut])
+def admin_activity(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200), admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = db.execute(select(AuditLog, User.email, Document.original_name).outerjoin(User, AuditLog.user_id == User.id).outerjoin(Document, AuditLog.document_id == Document.id).order_by(AuditLog.created_at.desc()).offset(offset).limit(limit)).all()
+    return [AdminAuditOut(id=event.id, action=event.action, details=event.details, created_at=event.created_at, actor_email=email, document_name=name) for event,email,name in rows]
 
 @app.get("/api/v1/users/public-key")
 def recipient_public_key(email: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
