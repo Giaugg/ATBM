@@ -1,18 +1,35 @@
 # VaultShare
 
-Ứng dụng web lưu trữ và chia sẻ tài liệu an toàn, gồm client Next.js, API Python/FastAPI, PostgreSQL, migration Alembic và kho bản mã trên ổ đĩa dạng volume.
+Ứng dụng web lưu trữ và chia sẻ tài liệu an toàn, gồm client Next.js, API Python/FastAPI, PostgreSQL cài trực tiếp trên máy, migration Alembic và kho bản mã trên ổ đĩa.
 
 ## Chạy toàn bộ bằng Docker
 
-Cần Docker Desktop đang chạy. Từ thư mục gốc dự án:
+Cần Docker Desktop và PostgreSQL 16 cài trên Windows đang chạy. PostgreSQL không chạy trong Docker; Compose chỉ chạy API và client. Từ thư mục gốc dự án, tạo file `.env` từ mẫu (nếu chưa có) rồi chỉnh `DATABASE_URL` theo tài khoản PostgreSQL trên máy:
+
+```powershell
+if (!(Test-Path .\.env)) { Copy-Item .\.env.example .\.env }
+```
+
+Đặt `DATABASE_URL` dạng `postgresql+psycopg://vaultshare:<mat-khau>@host.docker.internal:5432/vaultshare`. Ví dụ giá trị mặc định trong file mẫu dùng mật khẩu `vaultshare_dev`, chỉ phù hợp cho local.
 
 ```bash
 docker compose up --build
 ```
 
-Mở ứng dụng tại [http://localhost:3000](http://localhost:3000), API docs tại [http://localhost:8000/docs](http://localhost:8000/docs). API tự chạy `alembic upgrade head` trước khi khởi động. Dữ liệu PostgreSQL và tệp mã hóa tồn tại trong hai Docker volume riêng.
+Mở ứng dụng tại [http://localhost:3000](http://localhost:3000), API docs tại [http://localhost:8000/docs](http://localhost:8000/docs). API tự chạy `alembic upgrade head` trước khi khởi động. Dữ liệu PostgreSQL nằm trong thư mục dữ liệu PostgreSQL trên Windows; tệp mã hóa nằm trong Docker volume `encrypted_files`.
 
-Thiết lập `POSTGRES_PASSWORD` và `JWT_SECRET` trong môi trường trước khi chạy nếu dùng ngoài máy phát triển. Giá trị mặc định trong Compose chỉ dành cho local.
+Thiết lập `JWT_SECRET` trong `.env` nếu dùng ngoài máy phát triển. `DATABASE_URL` trong `.env` được API dùng khi chạy bằng Compose.
+
+### PostgreSQL và pgAdmin
+
+Cài PostgreSQL 16 và pgAdmin trên Windows. Trong pgAdmin, đăng ký server với **Host** `localhost`, **Port** `5432`, **Maintenance database** `postgres`, **Username** `postgres` và mật khẩu đã đặt khi cài PostgreSQL. Mở Query Tool và tạo database/user dùng cho ứng dụng:
+
+```sql
+CREATE USER vaultshare WITH PASSWORD 'vaultshare_dev';
+CREATE DATABASE vaultshare OWNER vaultshare;
+```
+
+Đổi mật khẩu ví dụ thành mật khẩu riêng rồi đặt cùng giá trị trong `DATABASE_URL` ở file `.env` gốc. Sau khi tạo, có thể đăng ký thêm server trong pgAdmin với database `vaultshare`, username `vaultshare` để xem dữ liệu ứng dụng. PostgreSQL phải lắng nghe trên cổng `5432`; từ container API, `host.docker.internal` trỏ về máy Windows.
 
 Khi chạy bằng Compose, API bật seed tài khoản demo sau migration. Khi chạy API trực tiếp trên máy, seed mặc định tắt; có thể bật thủ công theo hướng dẫn bên dưới. Seed có tính idempotent: nếu email đã tồn tại thì giữ nguyên tài khoản đó.
 
@@ -27,11 +44,11 @@ Khi chạy bằng Compose, API bật seed tài khoản demo sau migration. Khi c
 
 ## Chạy local trên Windows
 
-> Cách này chạy PostgreSQL, API và client trực tiếp trên máy; không chạy service API/client trong Docker. Cần Node.js/npm, Python 3.12 và PostgreSQL 16 đang chạy. PostgreSQL phải nghe trên `localhost:5432`, đúng với `DATABASE_URL` mẫu.
+> Cách này chạy PostgreSQL, API và client trực tiếp trên máy; không chạy service API/client trong Docker. Cần **Node.js/npm**, **Python 3.12** và **PostgreSQL** đang chạy trên `localhost:5432`, đúng với `DATABASE_URL` trong `server/.env`.
 
 ### 1. Kiểm tra database
 
-Đảm bảo PostgreSQL có database `vaultshare` và user/password khớp với `DATABASE_URL` trong `server/.env`. Nếu cần tạo mới, mở PowerShell rồi chạy `psql -U postgres`; tại prompt `psql`, tạo user và database (đổi password ví dụ thành giá trị local của bạn):
+Đảm bảo PostgreSQL đang chạy và có database `vaultshare` cùng user khớp với `DATABASE_URL` trong `server/.env`. Nếu cần tạo mới, mở PowerShell rồi chạy `psql -U postgres`; tại prompt `psql`, tạo user và database (đổi password ví dụ thành giá trị local của bạn):
 
 ```sql
 CREATE USER vaultshare WITH PASSWORD 'choose-a-local-password';
@@ -40,24 +57,30 @@ CREATE DATABASE vaultshare OWNER vaultshare;
 
 Nếu password chứa ký tự đặc biệt như `@`, `:` hoặc `/`, hãy URL-encode phần password trong `DATABASE_URL`. Thoát `psql` bằng `\q`.
 
-> Compose hiện không publish port PostgreSQL ra host. Nếu dùng PostgreSQL trong Docker thay cho PostgreSQL cài trên Windows, cần chủ động publish port `5432` tới loopback hoặc dùng cấu hình kết nối phù hợp; chỉ chạy `docker compose up -d db` sẽ không làm database truy cập được qua `localhost:5432`.
+Nếu chạy API trực tiếp trên Windows (không dùng Compose), `DATABASE_URL` dùng `localhost` như mẫu `server/.env`. Nếu API chạy trong Compose, dùng `host.docker.internal` như hướng dẫn trên.
 
-### 2. Cấu hình và chạy API
+### 2. Cài đặt và chạy API (lần đầu)
 
-Mở terminal thứ nhất tại thư mục gốc dự án. Nếu chưa có file môi trường, tạo từ mẫu; không ghi đè `server/.env` đang tồn tại:
+Mở terminal thứ nhất tại thư mục gốc dự án (`C:\Users\1\Desktop\DA\ATBM`). Nếu chưa có `server/.env`, tạo từ file mẫu (không ghi đè file đang tồn tại):
 
 ```powershell
 Set-Location C:\Users\1\Desktop\DA\ATBM
 if (!(Test-Path .\server\.env)) { Copy-Item .\server\.env.example .\server\.env }
 ```
 
-Mở `server/.env` và xác nhận `DATABASE_URL`, `JWT_SECRET`, `ADMIN_BOOTSTRAP_TOKEN`, `CORS_ORIGINS` và `STORAGE_PATH`. File này được Git ignore; không commit hoặc gửi các secret lên repository.
+Mở `server/.env` và xác nhận `DATABASE_URL`, `JWT_SECRET`, `ADMIN_BOOTSTRAP_TOKEN`, `CORS_ORIGINS` và `STORAGE_PATH` (`./storage`). File này được Git ignore; không commit hoặc gửi các secret lên repository.
 
-Tạo virtual environment, cài dependencies, chạy migration rồi khởi động API:
+Nếu máy chưa có Python 3.12, cài qua `winget`:
 
 ```powershell
-Set-Location .\server
-py -3.12 -m venv .venv
+winget install --id Python.Python.3.12 -e --source winget
+```
+
+Tạo virtual environment trong `server/`, cài dependencies, chạy migration rồi khởi động API:
+
+```powershell
+Set-Location C:\Users\1\Desktop\DA\ATBM\server
+& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -65,9 +88,19 @@ alembic upgrade head
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Nếu PowerShell chặn activate script, cho phép script ở terminal hiện tại bằng `Set-ExecutionPolicy -Scope Process Bypass`, sau đó activate lại. Nếu lệnh `py -3.12` không tồn tại, cài Python 3.12 và bật Python Launcher/PATH.
+> Nếu máy đã cấu hình Python Launcher (`py -3.12`), có thể thay dòng tạo `.venv` bằng `py -3.12 -m venv .venv`. Nếu PowerShell chặn chạy script activate, mở quyền cho phiên terminal hiện tại bằng `Set-ExecutionPolicy -Scope Process Bypass`, sau đó chạy lại `.\.venv\Scripts\Activate.ps1`.
 
-Muốn tạo tài khoản demo local, dừng API bằng `Ctrl+C`, vẫn ở thư mục `server` và chạy:
+### 3. Chạy lại API ở các lần sau
+
+Khi đã cài xong `.venv` và migration, ở các lần sau chỉ cần chạy:
+
+```powershell
+Set-Location C:\Users\1\Desktop\DA\ATBM\server
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Muốn tạo tài khoản demo local, dừng API bằng `Ctrl+C`, vẫn ở thư mục `server` (đang activate `.venv`) và chạy:
 
 ```powershell
 $env:SEED_DEMO_USERS = "true"
@@ -75,9 +108,9 @@ python -m app.seed
 Remove-Item Env:SEED_DEMO_USERS
 ```
 
-Sau đó khởi động lại API. Nếu không seed demo, có thể đăng ký tài khoản mới tại `/login`.
+Sau đó khởi động lại `uvicorn`. Nếu không seed demo, có thể đăng ký tài khoản mới trực tiếp tại `/login`.
 
-### 3. Chạy client
+### 4. Chạy client
 
 Mở terminal thứ hai tại thư mục gốc dự án:
 
@@ -99,6 +132,7 @@ Với `STORAGE_PATH=./storage`, backend ghi ciphertext vào thư mục `storage`
 
 - [Giới thiệu và giải thích các tính năng hiện có](docs/gioi-thieu-va-tinh-nang.md)
 - [Sơ đồ và giải thích các luồng hoạt động chính](docs/luong-hoat-dong.md)
+- [Công dụng các bảng SQL và Cơ chế quản lý khóa](docs/bang-sql-va-co-che-khoa.md)
 - [Sơ đồ ERD và giải thích bảng](docs/erd.md)
 
 ### Cơ sở dữ liệu
@@ -114,7 +148,7 @@ Các bảng gồm `users`, `documents`, `document_grants` và `audit_logs`. Meta
 Mở terminal tại thư mục gốc dự án và vào PostgreSQL:
 
 ```bash
-docker compose exec db psql -U vaultshare -d vaultshare
+psql -h localhost -U vaultshare -d vaultshare
 ```
 
 Trong dấu nhắc `psql`, dùng các lệnh sau:
@@ -122,13 +156,13 @@ Trong dấu nhắc `psql`, dùng các lệnh sau:
 ```sql
 \dt
 \d+ users
-SELECT id, email, display_name, is_active, created_at FROM users ORDER BY id;
+SELECT *id, email, display_name, is_active, created_at* FROM users ORDER BY id;
+```
 SELECT id, owner_id, original_name, original_size, ciphertext_size, checksum_sha256, created_at FROM documents ORDER BY id;
 SELECT document_id, user_id, granted_by_id, created_at FROM document_grants ORDER BY document_id, user_id;
 SELECT id, user_id, document_id, action, details, created_at FROM audit_logs ORDER BY id DESC LIMIT 20;
-```
 
-Thoát bằng `\q`. Nếu muốn mở shell PostgreSQL bên ngoài container, cổng `5432` hiện chỉ được expose trong network nội bộ Compose; dùng `docker compose exec` như trên.
+Thoát bằng `\q`. Có thể xem/chỉnh sửa database trực quan bằng pgAdmin với server `localhost:5432` và database `vaultshare`.
 
 ### Tài khoản demo
 

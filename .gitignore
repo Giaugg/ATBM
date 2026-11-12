@@ -1,10 +1,17 @@
 node_modules/
 .next/
+client/out/
 dist/
 coverage/
+*.tsbuildinfo
 .env
+.env.local
+.env.*.local
 server/.env
 server/storage/
+.venv/
+venv/
+__pycache__/
 server/__pycache__/
 server/app/__pycache__/
 server/migrations/__pycache__/

@@ -78,5 +78,20 @@ Các quyền admin luôn được kiểm tra ở API, không chỉ bằng cách 
 ## Tài liệu liên quan
 
 - [Sơ đồ và giải thích các luồng hoạt động chính](luong-hoat-dong.md)
+- [Công dụng các bảng SQL và Cơ chế quản lý khóa](bang-sql-va-co-che-khoa.md)
 - [Sơ đồ ERD và giải thích database](erd.md)
 - API docs khi chạy local: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+## Giải thích các thuật ngữ
+
+| Thuật ngữ | Giải thích |
+| :--- | :--- |
+| **Mã hóa đầu cuối (E2EE)** | Dữ liệu được mã hóa tại thiết bị người gửi và chỉ giải mã tại thiết bị người nhận hợp lệ; máy chủ trung gian không đọc được nội dung rõ. |
+| **AES-256-GCM** | Thuật toán mã hóa đối xứng khóa 256-bit kèm thẻ xác thực toàn vẹn (**Auth Tag 16 byte**) để mã hóa nội dung tệp và private key. |
+| **RSA-OAEP (2048-bit)** | Thuật toán mã hóa bất đối xứng dùng cặp `public_key` / `private_key` (SHA-256) để bọc và mở khóa AES của từng tài liệu. |
+| **PBKDF2-HMAC-SHA-256** | Hàm dẫn xuất khóa từ mật khẩu người dùng (310.000 vòng + `kdf_salt`) tạo khóa AES mở `encrypted_private_key`. |
+| **Argon2id** | Thuật toán băm mật khẩu phía máy chủ để xác thực đăng nhập an toàn. |
+| **JWT Bearer Token** | Token phiên đăng nhập (`access_token`) gửi trong header `Authorization: Bearer <token>`. |
+| **Ciphertext** | Tệp bản mã sau khi mã hóa, lưu trong volume `encrypted_files` theo tên ngẫu nhiên `storage_key`. |
+| **DocumentGrant** | Bản ghi cấp quyền trong bảng `document_grants` chứa `wrapped_key` riêng cho từng user và các cờ quyền `can_view`, `can_download`, `can_share`. |
+| **SHA-256 Checksum** | Chuỗi băm 256-bit dùng để kiểm tra bản mã có bị thay đổi hay hỏng hóc khi upload/download/verify hay không. |

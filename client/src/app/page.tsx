@@ -102,7 +102,26 @@ export default function Home() {
 		[password, setPassword] = useState(""),
 		[displayName, setDisplayName] = useState("");
 	const [shareDoc, setShareDoc] = useState<Doc | null>(null),
-		[shareEmail, setShareEmail] = useState("");
+		[shareEmail, setShareEmail] = useState(""),
+		[shareCanView, setShareCanView] = useState(true),
+		[shareCanDownload, setShareCanDownload] = useState(true),
+		[shareCanShare, setShareCanShare] = useState(false),
+		[openMenuDocId, setOpenMenuDocId] = useState<number | null>(null);
+
+	useEffect(() => {
+		function handleOutsideClick(e: MouseEvent) {
+			const target = e.target as HTMLElement;
+			if (!target.closest(".action-menu-container")) {
+				setOpenMenuDocId(null);
+			}
+		}
+		if (openMenuDocId !== null) {
+			document.addEventListener("mousedown", handleOutsideClick);
+		}
+		return () => {
+			document.removeEventListener("mousedown", handleOutsideClick);
+		};
+	}, [openMenuDocId]);
 	useEffect(() => {
 		const saved = localStorage.getItem("vaultshare_token");
 		const key = getActivePrivateKey();
@@ -294,11 +313,50 @@ export default function Home() {
 				privateKey,
 				recipient.public_key,
 			);
-			await api.share(token, shareDoc.id, shareEmail, wrapped);
-			setShareDoc(null);
+			const updated = await api.share(token, shareDoc.id, shareEmail, wrapped, {
+				can_view: shareCanView,
+				can_download: shareCanDownload,
+				can_share: shareCanShare,
+			});
+			setShareDoc(updated);
 			setShareEmail("");
+			setShareCanView(true);
+			setShareCanDownload(true);
+			setShareCanShare(false);
 			await reload();
-			notice("Đã chia sẻ khóa tài liệu bằng RSA-OAEP.");
+			notice("Đã chia sẻ tài liệu và cấp quyền thành công.");
+		} catch (e) {
+			setError((e as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	}
+	async function updateGrant(
+		grantId: number,
+		perms: { can_view: boolean; can_download: boolean; can_share: boolean },
+	) {
+		if (!shareDoc) return;
+		setBusy(true);
+		try {
+			const updated = await api.updateShare(token, shareDoc.id, grantId, perms);
+			setShareDoc(updated);
+			await reload();
+			notice("Đã cập nhật quyền thành công.");
+		} catch (e) {
+			setError((e as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	}
+	async function revokeGrant(grantId: number, name: string) {
+		if (!shareDoc) return;
+		if (!confirm(`Thu hồi quyền truy cập của “${name}”?`)) return;
+		setBusy(true);
+		try {
+			const updated = await api.revokeShare(token, shareDoc.id, grantId);
+			setShareDoc(updated);
+			await reload();
+			notice("Đã thu hồi quyền chia sẻ.");
 		} catch (e) {
 			setError((e as Error).message);
 		} finally {
@@ -679,28 +737,62 @@ export default function Home() {
 													</td>
 													<td>{date(d.created_at)}</td>
 													<td>
-														<details>
-															<summary>···</summary>
-															<menu>
-																<button onClick={() => download(d)}>
-																	↓ Tải xuống
-																</button>
-																<button onClick={() => verifyDoc(d)}>
-																	✓ Kiểm tra lưu trữ
-																</button>
-																<button
-																	onClick={() => {
-																		setShareDoc(d);
-																		setShareEmail("");
-																	}}
-																>
-																	♧ Chia sẻ
-																</button>
-																<button onClick={() => remove(d)}>
-																	× Xóa tài liệu
-																</button>
-															</menu>
-														</details>
+														<div className="action-menu-container">
+															<details
+																open={openMenuDocId === d.id}
+																onClick={(e) => {
+																	e.preventDefault();
+																	setOpenMenuDocId(openMenuDocId === d.id ? null : d.id);
+																}}
+															>
+																<summary>···</summary>
+																{openMenuDocId === d.id && (
+																	<menu>
+																		{(d.is_owner || d.can_download) && (
+																			<button
+																				onClick={() => {
+																					setOpenMenuDocId(null);
+																					download(d);
+																				}}
+																			>
+																				↓ Tải xuống
+																			</button>
+																		)}
+																		{(d.is_owner || d.can_view) && (
+																			<button
+																				onClick={() => {
+																					setOpenMenuDocId(null);
+																					verifyDoc(d);
+																				}}
+																			>
+																				✓ Kiểm tra lưu trữ
+																			</button>
+																		)}
+																		{(d.is_owner || d.can_share) && (
+																			<button
+																				onClick={() => {
+																					setOpenMenuDocId(null);
+																					setShareDoc(d);
+																					setShareEmail("");
+																				}}
+																			>
+																				♧ Quản lý chia sẻ
+																			</button>
+																		)}
+																		{d.is_owner && (
+																			<button
+																				onClick={() => {
+																					setOpenMenuDocId(null);
+																					remove(d);
+																				}}
+																			>
+																				× Xóa tài liệu
+																			</button>
+																		)}
+																	</menu>
+																)}
+															</details>
+														</div>
 													</td>
 												</tr>
 											))}
@@ -766,10 +858,37 @@ export default function Home() {
 												</small>
 											</div>
 											<div className="secondary-meta">
-												{d.grants.length - 1} người nhận
-												<button className="outline" onClick={() => download(d)}>
-													Tải xuống
-												</button>
+												<div style={{ display: "flex", gap: "6px", alignItems: "center", justifyContent: "flex-end" }}>
+													{d.owner_email === user.email ? (
+														<span>{d.grants.length - 1} người nhận</span>
+													) : (
+														<span style={{ fontSize: "11px", color: "#617163" }}>
+															Quyền: {[
+																d.can_view && "Xem",
+																d.can_download && "Tải về",
+																d.can_share && "Chia sẻ tiếp",
+															].filter(Boolean).join(", ") || "Không có"}
+														</span>
+													)}
+												</div>
+												<div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+													{(d.is_owner || d.can_share) && (
+														<button
+															className="outline"
+															onClick={() => {
+																setShareDoc(d);
+																setShareEmail("");
+															}}
+														>
+															♧ Chia sẻ
+														</button>
+													)}
+													{(d.is_owner || d.can_download) && (
+														<button className="outline" onClick={() => download(d)}>
+															↓ Tải xuống
+														</button>
+													)}
+												</div>
 											</div>
 										</div>
 									))}
@@ -825,31 +944,143 @@ export default function Home() {
 					className="backdrop"
 					onMouseDown={(e) => e.target === e.currentTarget && setShareDoc(null)}
 				>
-					<section className="modal">
+					<section className="modal modal-large">
 						<button className="close" onClick={() => setShareDoc(null)}>
 							×
 						</button>
-						<small className="eyebrow">CHIA SẺ MÃ HÓA</small>
-						<h2>Chia sẻ tài liệu</h2>
+						<small className="eyebrow">CHIA SẺ & PHÂN QUYỀN MÃ HÓA</small>
+						<h2>{shareDoc.original_name}</h2>
 						<p>
-							Khóa AES của “{shareDoc.original_name}” được bọc bằng khóa RSA của
-							người nhận.
+							Quản lý danh sách người nhận và cấp quyền linh hoạt (Xem, Tải xuống, Chia sẻ tiếp).
 						</p>
-						<form onSubmit={share}>
-							<label>
-								Email người nhận
-								<input
-									type="email"
-									required
-									value={shareEmail}
-									onChange={(e) => setShareEmail(e.target.value)}
-									placeholder="nguoi-nhan@email.com"
-								/>
-							</label>
-							<button className="primary full" disabled={busy}>
-								Chia sẻ an toàn <span>→</span>
-							</button>
-						</form>
+
+						<div className="modal-body">
+							{(shareDoc.is_owner || shareDoc.can_share) && (
+								<form className="share-form-card" onSubmit={share}>
+									<b>Chia sẻ cho người dùng mới</b>
+									<label style={{ margin: "8px 0 4px" }}>
+										<input
+											type="email"
+											required
+											value={shareEmail}
+											onChange={(e) => setShareEmail(e.target.value)}
+											placeholder="nguoi-nhan@email.com"
+										/>
+									</label>
+									<div className="perm-checkboxes">
+										<label>
+											<input
+												type="checkbox"
+												checked={shareCanView}
+												onChange={(e) => setShareCanView(e.target.checked)}
+											/>
+											Được xem
+										</label>
+										<label>
+											<input
+												type="checkbox"
+												checked={shareCanDownload}
+												onChange={(e) => setShareCanDownload(e.target.checked)}
+											/>
+											Được tải về
+										</label>
+										<label>
+											<input
+												type="checkbox"
+												checked={shareCanShare}
+												onChange={(e) => setShareCanShare(e.target.checked)}
+											/>
+											Được chia sẻ tiếp
+										</label>
+									</div>
+									<button className="primary full" disabled={busy}>
+										{busy ? "Đang xử lý..." : "Cấp quyền & Chia sẻ →"}
+									</button>
+								</form>
+							)}
+
+							<div>
+								<b>Danh sách người đã được chia sẻ ({shareDoc.grants.filter((g) => g.email !== shareDoc.owner_email).length})</b>
+								<div className="shared-users-list">
+									{shareDoc.grants
+										.filter((g) => g.email !== shareDoc.owner_email)
+										.map((g) => (
+											<div className="shared-user-item" key={g.id}>
+												<div className="shared-user-info">
+													<div>
+														<b>{g.display_name}</b>
+														<small>{g.email} · {date(g.created_at)}</small>
+													</div>
+													{(shareDoc.is_owner || shareDoc.can_share) && (
+														<button
+															type="button"
+															className="revoke-btn"
+															disabled={busy}
+															onClick={() => revokeGrant(g.id, g.display_name || g.email)}
+														>
+															Thu hồi quyền
+														</button>
+													)}
+												</div>
+												<div className="shared-user-perms">
+													<div className="perm-checkboxes" style={{ margin: 0 }}>
+														<label>
+															<input
+																type="checkbox"
+																disabled={!shareDoc.is_owner && !shareDoc.can_share}
+																checked={g.can_view}
+																onChange={(e) =>
+																	updateGrant(g.id, {
+																		can_view: e.target.checked,
+																		can_download: g.can_download,
+																		can_share: g.can_share,
+																	})
+																}
+															/>
+															Xem
+														</label>
+														<label>
+															<input
+																type="checkbox"
+																disabled={!shareDoc.is_owner && !shareDoc.can_share}
+																checked={g.can_download}
+																onChange={(e) =>
+																	updateGrant(g.id, {
+																		can_view: g.can_view,
+																		can_download: e.target.checked,
+																		can_share: g.can_share,
+																	})
+																}
+															/>
+															Tải về
+														</label>
+														<label>
+															<input
+																type="checkbox"
+																disabled={!shareDoc.is_owner && !shareDoc.can_share}
+																checked={g.can_share}
+																onChange={(e) =>
+																	updateGrant(g.id, {
+																		can_view: g.can_view,
+																		can_download: g.can_download,
+																		can_share: e.target.checked,
+																	})
+																}
+															/>
+															Chia sẻ tiếp
+														</label>
+													</div>
+												</div>
+											</div>
+										))}
+									{shareDoc.grants.filter((g) => g.email !== shareDoc.owner_email).length === 0 && (
+										<p style={{ color: "#919a93", fontSize: "12px", margin: "8px 0" }}>
+											Chưa chia sẻ cho ai ngoài chủ sở hữu.
+										</p>
+									)}
+								</div>
+							</div>
+						</div>
 					</section>
 				</div>
 			)}

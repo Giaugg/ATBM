@@ -49,14 +49,24 @@ class TokenOut(BaseModel):
 class ShareIn(BaseModel):
     email: EmailStr
     wrapped_key: str = Field(min_length=20)
+    can_view: bool = True
+    can_download: bool = True
+    can_share: bool = False
+
+class UpdateGrantIn(BaseModel):
+    can_view: bool = True
+    can_download: bool = True
+    can_share: bool = False
 
 class GrantOut(BaseModel):
-    email: str; display_name: str; created_at: datetime
+    id: int; user_id: int; email: str; display_name: str; created_at: datetime
+    can_view: bool; can_download: bool; can_share: bool
 
 class DocumentOut(BaseModel):
     id: int; original_name: str; content_type: str; original_size: int; ciphertext_size: int
     cipher_nonce: str; checksum_sha256: str; owner_email: str; created_at: datetime
-    wrapped_key: str; grants: list[GrantOut]
+    wrapped_key: str; can_view: bool; can_download: bool; can_share: bool; is_owner: bool
+    grants: list[GrantOut]
 
 class StatsOut(BaseModel):
     document_count: int; storage_bytes: int; shared_count: int; recipient_count: int

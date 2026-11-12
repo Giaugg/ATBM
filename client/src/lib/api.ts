@@ -35,7 +35,16 @@ export type AdminEvent = {
 	actor_email: string | null;
 	document_name: string | null;
 };
-export type Grant = { email: string; display_name: string; created_at: string };
+export type Grant = {
+	id: number;
+	user_id: number;
+	email: string;
+	display_name: string;
+	created_at: string;
+	can_view: boolean;
+	can_download: boolean;
+	can_share: boolean;
+};
 export type Doc = {
 	id: number;
 	original_name: string;
@@ -47,6 +56,10 @@ export type Doc = {
 	owner_email: string;
 	created_at: string;
 	wrapped_key: string;
+	can_view: boolean;
+	can_download: boolean;
+	can_share: boolean;
+	is_owner: boolean;
 	grants: Grant[];
 };
 async function call<T>(
@@ -189,10 +202,34 @@ export const api = {
 			actual_sha256: string;
 			ciphertext_size: number;
 		}>(`/documents/${id}/verify`, token, { method: "POST" }),
-	share: (token: string, id: number, email: string, wrapped_key: string) =>
+	share: (
+		token: string,
+		id: number,
+		email: string,
+		wrapped_key: string,
+		perms: { can_view: boolean; can_download: boolean; can_share: boolean } = {
+			can_view: true,
+			can_download: true,
+			can_share: false,
+		},
+	) =>
 		call<Doc>(`/documents/${id}/shares`, token, {
 			method: "POST",
-			body: JSON.stringify({ email, wrapped_key }),
+			body: JSON.stringify({ email, wrapped_key, ...perms }),
+		}),
+	updateShare: (
+		token: string,
+		docId: number,
+		grantId: number,
+		perms: { can_view: boolean; can_download: boolean; can_share: boolean },
+	) =>
+		call<Doc>(`/documents/${docId}/shares/${grantId}`, token, {
+			method: "PATCH",
+			body: JSON.stringify(perms),
+		}),
+	revokeShare: (token: string, docId: number, grantId: number) =>
+		call<Doc>(`/documents/${docId}/shares/${grantId}`, token, {
+			method: "DELETE",
 		}),
 	remove: (token: string, id: number) =>
 		call<{ message: string }>(`/documents/${id}`, token, { method: "DELETE" }),

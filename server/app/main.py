@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from .config import settings
 from .database import get_db
 from .models import AuditLog, Document, DocumentGrant, User
-from .schemas import AdminAuditOut, AdminBootstrapIn, AdminDocumentOut, AdminOverviewOut, AdminUserActiveIn, AdminUserOut, AuditOut, DocumentOut, LoginIn, MessageOut, ProfileUpdateIn, RegisterIn, ShareIn, StatsOut, TokenOut, UserOut
+from .schemas import AdminAuditOut, AdminBootstrapIn, AdminDocumentOut, AdminOverviewOut, AdminUserActiveIn, AdminUserOut, AuditOut, DocumentOut, LoginIn, MessageOut, ProfileUpdateIn, RegisterIn, ShareIn, StatsOut, TokenOut, UpdateGrantIn, UserOut
 from .security import current_user, hash_password, make_token, require_admin, verify_password
 
 @asynccontextmanager
@@ -18,7 +18,7 @@ async def lifespan(_: FastAPI):
     yield
 
 app = FastAPI(title="VaultShare API", version="1.0.0", description="API lưu trữ bản mã tài liệu VaultShare", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in settings.cors_origins.split(',')], allow_credentials=True, allow_methods=["GET","POST","DELETE","OPTIONS"], allow_headers=["Authorization","Content-Type"])
+app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in settings.cors_origins.split(',')], allow_credentials=True, allow_methods=["GET","POST","PATCH","DELETE","OPTIONS"], allow_headers=["Authorization","Content-Type"])
 
 def audit(db: Session, user_id: int | None, action: str, detail: str | None = None, document_id: int | None = None, request: Request | None = None):
     ip = request.client.host if request and request.client else None
@@ -32,7 +32,36 @@ def get_document_for_user(db: Session, document_id: int, user_id: int):
     return doc, grant
 
 def document_out(doc: Document, grant: DocumentGrant) -> DocumentOut:
-    return DocumentOut(id=doc.id, original_name=doc.original_name, content_type=doc.content_type, original_size=doc.original_size, ciphertext_size=doc.ciphertext_size, cipher_nonce=doc.cipher_nonce, checksum_sha256=doc.checksum_sha256, owner_email=doc.owner.email, created_at=doc.created_at, wrapped_key=grant.wrapped_key, grants=[{"email":g.user.email,"display_name":g.user.display_name,"created_at":g.created_at} for g in doc.grants])
+    is_owner = doc.owner_id == grant.user_id
+    return DocumentOut(
+        id=doc.id,
+        original_name=doc.original_name,
+        content_type=doc.content_type,
+        original_size=doc.original_size,
+        ciphertext_size=doc.ciphertext_size,
+        cipher_nonce=doc.cipher_nonce,
+        checksum_sha256=doc.checksum_sha256,
+        owner_email=doc.owner.email,
+        created_at=doc.created_at,
+        wrapped_key=grant.wrapped_key,
+        can_view=True if is_owner else bool(grant.can_view),
+        can_download=True if is_owner else bool(grant.can_download),
+        can_share=True if is_owner else bool(grant.can_share),
+        is_owner=is_owner,
+        grants=[
+            {
+                "id": g.id,
+                "user_id": g.user.id,
+                "email": g.user.email,
+                "display_name": g.user.display_name,
+                "created_at": g.created_at,
+                "can_view": bool(g.can_view),
+                "can_download": bool(g.can_download),
+                "can_share": bool(g.can_share),
+            }
+            for g in doc.grants
+        ],
+    )
 
 @app.get("/health", response_model=MessageOut)
 def health(): return {"message":"ok"}
@@ -176,14 +205,20 @@ def list_documents(user: User = Depends(current_user), db: Session = Depends(get
 
 @app.get("/api/v1/documents/{document_id}/content")
 def download_document(document_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    doc, _ = get_document_for_user(db,document_id,user.id); path=Path(settings.storage_path)/doc.storage_key
+    doc, grant = get_document_for_user(db,document_id,user.id)
+    if doc.owner_id != user.id and not grant.can_download:
+        raise HTTPException(403, "Bạn không có quyền tải xuống tài liệu này")
+    path=Path(settings.storage_path)/doc.storage_key
     if not path.is_file(): raise HTTPException(410,"Bản mã không còn trong kho")
     audit(db,user.id,"ciphertext_downloaded",doc.original_name,doc.id,request); db.commit()
     return FileResponse(path,media_type="application/octet-stream",filename=f"{doc.id}.vaultcipher",headers={"Cache-Control":"no-store"})
 
 @app.post("/api/v1/documents/{document_id}/verify")
 def verify_document(document_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    doc,_=get_document_for_user(db,document_id,user.id); path=Path(settings.storage_path)/doc.storage_key
+    doc, grant = get_document_for_user(db,document_id,user.id)
+    if doc.owner_id != user.id and not grant.can_view:
+        raise HTTPException(403, "Bạn không có quyền xem tài liệu này")
+    path=Path(settings.storage_path)/doc.storage_key
     if not path.is_file(): raise HTTPException(410,"Bản mã không còn trong kho")
     h=hashlib.sha256()
     with path.open('rb') as f:
@@ -194,15 +229,65 @@ def verify_document(document_id: int, request: Request, user: User = Depends(cur
 
 @app.post("/api/v1/documents/{document_id}/shares", response_model=DocumentOut, status_code=201)
 def share_document(document_id: int, payload: ShareIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    doc,grant=get_document_for_user(db,document_id,user.id)
-    if doc.owner_id != user.id: raise HTTPException(403,"Chỉ chủ sở hữu có thể chia sẻ tài liệu")
+    doc, grant = get_document_for_user(db,document_id,user.id)
+    if doc.owner_id != user.id and not grant.can_share:
+        raise HTTPException(403, "Bạn không có quyền chia sẻ tài liệu này")
     recipient=db.scalar(select(User).where(User.email==str(payload.email).lower()))
     if not recipient: raise HTTPException(404,"Không tìm thấy tài khoản người nhận")
     if recipient.id==user.id: raise HTTPException(422,"Không thể chia sẻ cho chính bạn")
     existing=db.scalar(select(DocumentGrant).where(DocumentGrant.document_id==doc.id,DocumentGrant.user_id==recipient.id))
     if existing: raise HTTPException(409,"Tài liệu đã được chia sẻ với tài khoản này")
-    db.add(DocumentGrant(document_id=doc.id,user_id=recipient.id,granted_by_id=user.id,wrapped_key=payload.wrapped_key)); audit(db,user.id,"document_shared",recipient.email,doc.id,request); db.commit()
-    doc=db.execute(select(Document).options(joinedload(Document.owner),joinedload(Document.grants).joinedload(DocumentGrant.user)).where(Document.id==doc.id)).unique().scalar_one();return document_out(doc,grant)
+    db.add(DocumentGrant(
+        document_id=doc.id,
+        user_id=recipient.id,
+        granted_by_id=user.id,
+        wrapped_key=payload.wrapped_key,
+        can_view=payload.can_view,
+        can_download=payload.can_download,
+        can_share=payload.can_share,
+    ))
+    audit(db,user.id,"document_shared",f"{recipient.email} (view={payload.can_view}, dl={payload.can_download}, share={payload.can_share})",doc.id,request)
+    db.commit()
+    doc=db.execute(select(Document).options(joinedload(Document.owner),joinedload(Document.grants).joinedload(DocumentGrant.user)).where(Document.id==doc.id)).unique().scalar_one()
+    grant=next(g for g in doc.grants if g.user_id==user.id)
+    return document_out(doc,grant)
+
+@app.patch("/api/v1/documents/{document_id}/shares/{grant_id}", response_model=DocumentOut)
+def update_share_permissions(document_id: int, grant_id: int, payload: UpdateGrantIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc, grant = get_document_for_user(db, document_id, user.id)
+    if doc.owner_id != user.id and not grant.can_share:
+        raise HTTPException(403, "Bạn không có quyền quản lý phân quyền tài liệu này")
+    target_grant = db.scalar(select(DocumentGrant).where(DocumentGrant.id == grant_id, DocumentGrant.document_id == doc.id))
+    if not target_grant:
+        raise HTTPException(404, "Không tìm thấy quyền chia sẻ")
+    if target_grant.user_id == doc.owner_id:
+        raise HTTPException(422, "Không thể thay đổi quyền của chủ sở hữu")
+    target_grant.can_view = payload.can_view
+    target_grant.can_download = payload.can_download
+    target_grant.can_share = payload.can_share
+    audit(db, user.id, "permission_updated", f"grant_id={grant_id} (view={payload.can_view}, dl={payload.can_download}, share={payload.can_share})", doc.id, request)
+    db.commit()
+    doc = db.execute(select(Document).options(joinedload(Document.owner), joinedload(Document.grants).joinedload(DocumentGrant.user)).where(Document.id == doc.id)).unique().scalar_one()
+    grant = next(g for g in doc.grants if g.user_id == user.id)
+    return document_out(doc, grant)
+
+@app.delete("/api/v1/documents/{document_id}/shares/{grant_id}", response_model=DocumentOut)
+def revoke_share(document_id: int, grant_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc, grant = get_document_for_user(db, document_id, user.id)
+    if doc.owner_id != user.id and not grant.can_share:
+        raise HTTPException(403, "Bạn không có quyền thu hồi chia sẻ tài liệu này")
+    target_grant = db.scalar(select(DocumentGrant).where(DocumentGrant.id == grant_id, DocumentGrant.document_id == doc.id))
+    if not target_grant:
+        raise HTTPException(404, "Không tìm thấy quyền chia sẻ")
+    if target_grant.user_id == doc.owner_id:
+        raise HTTPException(422, "Không thể thu hồi quyền của chủ sở hữu")
+    recipient_email = target_grant.user.email if target_grant.user else str(target_grant.user_id)
+    db.delete(target_grant)
+    audit(db, user.id, "share_revoked", recipient_email, doc.id, request)
+    db.commit()
+    doc = db.execute(select(Document).options(joinedload(Document.owner), joinedload(Document.grants).joinedload(DocumentGrant.user)).where(Document.id == doc.id)).unique().scalar_one()
+    grant = next(g for g in doc.grants if g.user_id == user.id)
+    return document_out(doc, grant)
 
 @app.delete("/api/v1/documents/{document_id}", response_model=MessageOut)
 def delete_document(document_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
